@@ -28,7 +28,7 @@ export function BootScreen() {
             变成一座<em>本地仓库</em>。
           </h1>
           <p className="boot-lede">
-            data/ 下的每个子目录是一个项目，每个文件是一张独立的数据表。
+            数据根目录下的每个子目录是一个项目，每个文件是一张独立的数据表。
             选择项目、选择数据源，再用 DuckDB 在本机加载、查询与导出。
           </p>
 

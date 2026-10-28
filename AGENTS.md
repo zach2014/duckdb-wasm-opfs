@@ -1,17 +1,23 @@
 # Atlas Workbench
 
-Local-first DuckDB-Wasm workbench for browsing `data/` and querying one file at a time in the browser. React 19 + TypeScript + Vite 6.
+Local-first DuckDB-Wasm workbench for browsing a data root (default `data/`) and querying one file at a time in the browser. React 19 + TypeScript + Vite 6.
 
 ## Data model
 
-- `data/` is the root. An immediate subfolder is a **project**; a tabular file anywhere beneath it is a **source**.
+- The data root is an immediate parent of **projects**; a tabular file anywhere beneath a project is a **source**.
 - One project maps to one DuckDB schema (its slug). One source maps to one table named `<kind>_<id>`.
 - Every source keeps its own column model. Loading is per source: one file = one table, so conflicting headers stay isolated.
-- `data/` is the user's input. Treat it as read-only and keep fixtures, caches, and outputs in a separate scratch directory.
+- The data root is the user's input. Treat it as read-only and keep fixtures, caches, and outputs in a separate scratch directory.
+
+## Configuration
+
+`ATLAS_DATA_ROOT` selects the filesystem root. `vite.config.ts` reads it with `loadEnv(mode, process.cwd(), '')`, so `.env.<mode>` files and shell values both work; relative values resolve from the project root and unset means `data`. Modes are `development` (`npm run dev`), `staging` (`dev:staging` / `build:staging`), and `production` (`npm run build`).
+
+The client and catalog always use `/data/` as the public URL prefix, whatever the configured root. Dev serves raw files through `serveDataFile()` — keep its traversal, dot-path, and format-extension guards. A build packages the configured root as `dist/data`.
 
 ## Catalog
 
-`vite.config.ts` owns `atlasCatalog()`. It scans the filesystem, derives metadata (columns, approximate rows, bytes, FNV-1a fingerprint), and serves `/atlas-catalog.json`: a dev middleware rescans on every request; `closeBundle` writes `dist/atlas-catalog.json` and copies `data/` into `dist/data`.
+`vite.config.ts` owns `atlasCatalog()`. It scans the filesystem, derives metadata (columns, approximate rows, bytes, FNV-1a fingerprint), and serves `/atlas-catalog.json`: a dev middleware rescans on every request; `closeBundle` writes `dist/atlas-catalog.json` and copies the data root into `dist/data`.
 
 The client reads that catalog for browsing; raw files are fetched only when a source is opened (`src/db/sources.ts`). Keep filesystem discovery in the plugin.
 
@@ -29,7 +35,7 @@ DuckDB-Wasm hands Arrow dates/timestamps over as epoch milliseconds. `normalizeV
 
 | Path | Owns |
 | --- | --- |
-| `vite.config.ts` | catalog scan, dev endpoint, build packaging |
+| `vite.config.ts` | data-root config, catalog scan, dev endpoints, build packaging |
 | `src/db/sources.ts` | catalog fetch, URL/identifier helpers, source kinds and labels |
 | `src/db/engine.ts` | warehouse boot, lazy ingestion, metadata, query normalization |
 | `src/db/DatabaseContext.tsx` | boot state, `loaded`, `ensureSource`, refresh/reset |
@@ -45,7 +51,7 @@ UI copy is Chinese; identifiers and comments are English. Keep table naming in `
 
 ## Verify
 
-`npm run build` runs the typecheck, the bundle, and catalog/data packaging; it must pass. The packaged build is a separate path: run `npm run preview` and repeat the load/reload check there.
+`npm run build` runs the typecheck, the bundle, and catalog/data packaging; it must pass. The packaged build is a separate path: run `npm run preview` and repeat the load/reload check there. Run once with a non-default `ATLAS_DATA_ROOT` in dev and build: the catalog, raw files, and packaged `dist/data` must all follow it.
 
 In the browser, open a project, load a source, and check preview, profile, and SQL. Reload: the table should restore from OPFS with the same row count. Load two sources in one project and confirm `information_schema.tables` lists two separate tables. Load the same file in two projects and confirm two schemas, each with its own table. Check 390 px, 768 px, and 1440 px plus a clean console.
 

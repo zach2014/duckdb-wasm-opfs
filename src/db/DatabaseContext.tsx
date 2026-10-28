@@ -54,7 +54,7 @@ const INITIAL_STEPS: BootStep[] = [
   },
   {
     id: 'catalog',
-    label: '索引 data/ 项目目录',
+    label: '索引数据根目录',
     hint: 'CATALOG',
     state: 'pending',
   },

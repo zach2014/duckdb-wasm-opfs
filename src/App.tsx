@@ -167,7 +167,7 @@ function Shell() {
           <p className="eyebrow">404 / NOT FOUND</p>
           <h1 className="page-title">这个地址没有对应的数据</h1>
           <p className="page-desc">
-            项目或数据源可能已从 data/ 中移除。刷新目录后再试一次。
+            项目或数据源可能已从数据根目录中移除。刷新目录后再试一次。
           </p>
           <button className="btn btn--primary" onClick={() => navigate('#/projects')}>
             返回项目总览

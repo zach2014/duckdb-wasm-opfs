@@ -8,7 +8,7 @@ import type {
 
 const BASE = import.meta.env.BASE_URL;
 
-/** Fetch the generated catalog of data/<project>/<file> entries. */
+/** Fetch the generated catalog of <dataRoot>/<project>/<file> entries. */
 export async function fetchCatalog(): Promise<AtlasCatalog> {
   const response = await fetch(`${BASE}atlas-catalog.json?ts=${Date.now()}`, {
     cache: 'no-store',
@@ -34,6 +34,7 @@ export function sourceUrl(source: SourceDef): string {
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
+  // The public prefix is stable; the dev server maps it to ATLAS_DATA_ROOT.
   return `${BASE}data/${encoded}`;
 }
 

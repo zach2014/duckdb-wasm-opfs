@@ -50,6 +50,8 @@ export function Projects({
     clearing,
   } = useDatabase();
   const [confirmClear, setConfirmClear] = useState(false);
+  const dataRoot = catalog?.dataRoot ?? 'data';
+  const rootHasOnlyFiles = projects.length === 0 && (catalog?.ignored ?? 0) > 0;
 
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.slug, project])),
@@ -112,7 +114,7 @@ export function Projects({
         title="数据项目"
         description={
           <>
-            <b>data/</b> 是数据库根目录。每个子目录是一个项目，目录里的每个文件都是一个独立数据源。
+            <b>{dataRoot}/</b> 是数据库根目录。每个子目录是一个项目，目录里的每个文件都是一个独立数据源。
             文件之间不会自动合并，选择项目后再选择数据源加载。
           </>
         }
@@ -164,7 +166,7 @@ export function Projects({
           label="项目"
           value={formatInt(projects.length)}
           suffix="个"
-          hint="data/ 下的每个子目录"
+          hint={`${dataRoot}/ 下的每个子目录`}
           tone="gold"
           delay={0}
           footer={
@@ -225,8 +227,12 @@ export function Projects({
         <Card>
           <EmptyState
             icon={<FolderOpen size={26} />}
-            title="还没有发现项目"
-            body="在 data/ 下创建子目录并放入 CSV / TSV / JSON 文件，然后点击“刷新目录”。"
+            title={rootHasOnlyFiles ? '数据根目录下没有项目' : '还没有发现项目'}
+            body={
+              rootHasOnlyFiles
+                ? `${dataRoot}/ 下只有文件，没有项目子目录。根目录应是项目的父目录；要浏览单个项目，请把根目录设为它的上一级（默认 data/）。`
+                : `在 ${dataRoot}/ 下创建子目录并放入 CSV / TSV / JSON 文件，然后点击“刷新目录”。`
+            }
           />
         </Card>
       ) : (
@@ -313,7 +319,7 @@ export function Projects({
           <div className="catalog-tree">
             <div className="tree-row tree-row--root">
               <FolderOpen size={12} />
-              <span className="mono">data/</span>
+              <span className="mono">{dataRoot}/</span>
               <span className="tree-meta">{projects.length} 个项目</span>
             </div>
             {projects.map((project) => {
@@ -372,7 +378,7 @@ export function Projects({
               <div>
                 <p className="rule-title">目录即项目</p>
                 <p className="rule-body">
-                  <span className="inline-code">data/&lt;project&gt;/…</span>{' '}
+                  <span className="inline-code">{dataRoot}/&lt;project&gt;/…</span>{' '}
                   的每一层目录只负责组织，不改变数据。
                 </p>
               </div>

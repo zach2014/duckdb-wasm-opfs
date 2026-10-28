@@ -21,7 +21,7 @@ export interface ColumnInfo {
 }
 
 export interface ProjectDef {
-  /** Original folder name under data/ */
+  /** Original folder name under the data root */
   id: string;
   /** Safe DuckDB schema name */
   slug: string;
@@ -39,7 +39,7 @@ export interface SourceDef {
   id: string;
   projectId: string;
   projectName: string;
-  /** Path relative to data/, e.g. leda/8ab…csv */
+  /** Path relative to the data root, e.g. leda/8ab…csv */
   relPath: string;
   fileName: string;
   baseName: string;
@@ -54,7 +54,10 @@ export interface SourceDef {
 
 export interface AtlasCatalog {
   generatedAt: string;
+  /** Public URL prefix serving the data root */
   root: string;
+  /** Configured data root for display; source paths stay relative */
+  dataRoot: string;
   projectCount: number;
   sourceCount: number;
   ignored: number;
