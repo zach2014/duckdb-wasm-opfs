@@ -21,7 +21,7 @@ import {
   folderTail,
   formatLabel,
   kindMeta,
-  shortFileName,
+  shortSourceLabel,
   sourceBadges,
   sourceKind,
   sourceTitle,
@@ -100,6 +100,7 @@ export function ProjectDetail({
       if (!needle) return true;
       return (
         source.fileName.toLowerCase().includes(needle) ||
+        (source.sheet?.toLowerCase().includes(needle) ?? false) ||
         source.folder.toLowerCase().includes(needle) ||
         source.columns.some((column) => column.toLowerCase().includes(needle)) ||
         sourceTitle(source).toLowerCase().includes(needle)
@@ -109,7 +110,12 @@ export function ProjectDetail({
     const sorted = [...result];
     if (sort === 'rows') sorted.sort((a, b) => b.rows - a.rows);
     else if (sort === 'bytes') sorted.sort((a, b) => b.bytes - a.bytes);
-    else if (sort === 'name') sorted.sort((a, b) => a.fileName.localeCompare(b.fileName));
+    else if (sort === 'name')
+      sorted.sort(
+        (a, b) =>
+          a.fileName.localeCompare(b.fileName) ||
+          (a.sheet ?? '').localeCompare(b.sheet ?? ''),
+      );
     else if (sort === 'columns')
       sorted.sort((a, b) => b.columns.length - a.columns.length);
     return sorted;
@@ -144,7 +150,7 @@ export function ProjectDetail({
         description={
           <>
             <span className="inline-code">{project.dir}</span> ·{' '}
-            {formatInt(project.sourceCount)} 个文件，每个文件独立建表。选择数据源后才会加载进
+            {formatInt(project.sourceCount)} 个数据源，每个数据源独立建表。选择数据源后才会加载进
             DuckDB。
           </>
         }
@@ -222,7 +228,7 @@ export function ProjectDetail({
           <FolderTree size={13} />
         </span>
         <p>
-          本项目内不同文件的字段结构可能互相冲突，因此 <b>不会</b> 被合并成一张宽表。每张表使用
+          本项目内不同数据源的字段结构可能互相冲突，因此 <b>不会</b> 被合并成一张宽表。每张表使用
           <span className="inline-code">"{project.slug}"."&lt;kind&gt;_&lt;id&gt;"</span>{' '}
           的限定名，可以安全地单独查询或 Join。
         </p>
@@ -346,7 +352,7 @@ export function ProjectDetail({
                           <Badge tone={meta.tone}>{meta.label}</Badge>
                         </div>
                         <div className="source-subline mono">
-                          {shortFileName(source)}
+                          {shortSourceLabel(source)}
                           {source.folder && (
                             <span className="source-folder" title={source.folder}>
                               <FolderTree size={9} />

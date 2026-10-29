@@ -131,6 +131,17 @@ export function shortFileName(source: SourceDef): string {
   return `${source.baseName.slice(0, 8)}…${source.baseName.slice(-4)}.${source.format}`;
 }
 
+/** File name plus worksheet, for compact lists. */
+export function shortSourceLabel(source: SourceDef): string {
+  const name = shortFileName(source);
+  return source.sheet ? `${name} · ${source.sheet}` : name;
+}
+
+/** Full file name plus worksheet. */
+export function sourceFileLabel(source: SourceDef): string {
+  return source.sheet ? `${source.fileName} · ${source.sheet}` : source.fileName;
+}
+
 export function folderLabel(folder: string): string {
   return folder || '根目录';
 }

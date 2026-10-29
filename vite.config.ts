@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import * as XLSX from 'xlsx';
 
 /* ------------------------------------------------------------------ */
 /* Catalog                                                             */
@@ -23,6 +24,7 @@ const FORMATS: Record<string, string> = {
   '.json': 'json',
   '.jsonl': 'jsonl',
   '.ndjson': 'jsonl',
+  '.xlsx': 'xlsx',
 };
 
 const MIME_TYPES: Record<string, string> = {
@@ -31,6 +33,7 @@ const MIME_TYPES: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
   '.jsonl': 'application/x-ndjson; charset=utf-8',
   '.ndjson': 'application/x-ndjson; charset=utf-8',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
 
 interface CatalogSource {
@@ -41,6 +44,8 @@ interface CatalogSource {
   fileName: string;
   folder: string;
   format: string;
+  /** Sheet name when the file is a workbook; one sheet = one source. */
+  sheet?: string;
   bytes: number;
   rows: number;
   columns: string[];
@@ -68,6 +73,15 @@ function fnv1a(text: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function fnv1aBuffer(buffer: Buffer): string {
+  let hash = 0x811c9dc5;
+  for (const byte of buffer) {
+    hash ^= byte;
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
@@ -175,11 +189,99 @@ function listFiles(dir: string, prefix = ''): string[] {
   return found;
 }
 
+function headerLabel(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).trim();
+}
+
+function countSheetRows(matrix: unknown[][]): number {
+  let rows = 0;
+  for (let i = 1; i < matrix.length; i++) {
+    const row = matrix[i] ?? [];
+    if (
+      row.some(
+        (cell) =>
+          cell !== null && cell !== undefined && String(cell).trim() !== '',
+      )
+    ) {
+      rows++;
+    }
+  }
+  return rows;
+}
+
 function buildCatalog(dataDir: string, dataRoot: string) {
   const usedIds = new Set<string>();
   const sources: CatalogSource[] = [];
   const projectMap = new Map<string, CatalogProject>();
   let ignored = 0;
+
+  const addSource = (input: {
+    projectName: string;
+    relPath: string;
+    fileName: string;
+    folder: string;
+    format: string;
+    sheet?: string;
+    bytes: number;
+    rows: number;
+    columns: string[];
+    fingerprint: string;
+    modifiedAt: string;
+  }) => {
+    const { projectName } = input;
+    let project = projectMap.get(projectName);
+    if (!project) {
+      project = {
+        id: projectName,
+        slug: slugify(projectName),
+        name: projectName,
+        dir: `${dataRoot}/${projectName}`,
+        sourceCount: 0,
+        rowCount: 0,
+        bytes: 0,
+        folders: [],
+        formats: [],
+      };
+      projectMap.set(projectName, project);
+    }
+
+    // A workbook sheet is its own source, so its identity includes the sheet.
+    const idSeed = input.sheet
+      ? `${input.relPath}\u0000${input.sheet}`
+      : input.relPath;
+    let id = fnv1a(idSeed);
+    let attempt = 0;
+    while (usedIds.has(id)) {
+      attempt++;
+      id = `${fnv1a(idSeed)}${attempt.toString(16)}`;
+    }
+    usedIds.add(id);
+
+    sources.push({
+      id,
+      projectId: project.slug,
+      projectName,
+      relPath: input.relPath,
+      fileName: input.fileName,
+      folder: input.folder,
+      format: input.format,
+      sheet: input.sheet,
+      bytes: input.bytes,
+      rows: input.rows,
+      columns: input.columns,
+      fingerprint: input.fingerprint,
+      modifiedAt: input.modifiedAt,
+    });
+
+    project.sourceCount++;
+    project.rowCount += input.rows;
+    if (input.folder && !project.folders.includes(input.folder)) {
+      project.folders.push(input.folder);
+    }
+    if (!project.formats.includes(input.format)) project.formats.push(input.format);
+  };
 
   for (const relPath of listFiles(dataDir)) {
     const segments = relPath.split('/');
@@ -189,6 +291,7 @@ function buildCatalog(dataDir: string, dataRoot: string) {
     }
     const projectName = segments[0];
     const fileName = segments[segments.length - 1];
+    const folder = segments.slice(1, -1).join('/');
     const ext = path.extname(fileName).toLowerCase();
     const format = FORMATS[ext];
     if (!format) {
@@ -197,13 +300,63 @@ function buildCatalog(dataDir: string, dataRoot: string) {
     }
 
     const abs = path.join(dataDir, ...segments);
-    let text = '';
+    let stat: fs.Stats;
     try {
-      const stat = fs.statSync(abs);
+      stat = fs.statSync(abs);
       if (stat.size === 0) {
         ignored++;
         continue;
       }
+    } catch {
+      ignored++;
+      continue;
+    }
+    const modifiedAt = stat.mtime.toISOString();
+
+    if (format === 'xlsx') {
+      let workbook: XLSX.WorkBook;
+      let buffer: Buffer;
+      try {
+        buffer = fs.readFileSync(abs);
+        workbook = XLSX.read(buffer, { type: 'buffer' });
+      } catch {
+        ignored++;
+        continue;
+      }
+      const fingerprint = fnv1aBuffer(buffer);
+      let added = 0;
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) continue;
+        const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          header: 1,
+          raw: true,
+          defval: null,
+          blankrows: false,
+        });
+        const columns = (matrix[0] ?? []).map(headerLabel).filter(Boolean);
+        if (columns.length === 0) continue;
+        addSource({
+          projectName,
+          relPath,
+          fileName,
+          folder,
+          format,
+          sheet: sheetName,
+          bytes: stat.size,
+          rows: countSheetRows(matrix),
+          columns,
+          fingerprint,
+          modifiedAt,
+        });
+        added++;
+      }
+      if (added === 0) ignored++;
+      continue;
+    }
+
+    let text = '';
+    try {
       text = fs.readFileSync(abs, 'utf8');
     } catch {
       ignored++;
@@ -221,55 +374,31 @@ function buildCatalog(dataDir: string, dataRoot: string) {
       continue;
     }
 
-    const slug = slugify(projectName);
-    let project = projectMap.get(projectName);
-    if (!project) {
-      project = {
-        id: projectName,
-        slug,
-        name: projectName,
-        dir: `${dataRoot}/${projectName}`,
-        sourceCount: 0,
-        rowCount: 0,
-        bytes: 0,
-        folders: [],
-        formats: [],
-      };
-      projectMap.set(projectName, project);
-    }
-
-    let id = fnv1a(relPath);
-    let attempt = 0;
-    while (usedIds.has(id)) {
-      attempt++;
-      id = `${fnv1a(relPath)}${attempt.toString(16)}`;
-    }
-    usedIds.add(id);
-
-    const folder = segments.slice(1, -1).join('/');
-    const stat = fs.statSync(abs);
-    const bytes = stat.size;
-
-    sources.push({
-      id,
-      projectId: project.slug,
+    addSource({
       projectName,
       relPath,
       fileName,
       folder,
       format,
-      bytes,
+      bytes: stat.size,
       rows: described.rows,
       columns: described.columns,
       fingerprint: fnv1a(text),
-      modifiedAt: stat.mtime.toISOString(),
+      modifiedAt,
     });
+  }
 
-    project.sourceCount++;
-    project.rowCount += described.rows;
-    project.bytes += bytes;
-    if (folder && !project.folders.includes(folder)) project.folders.push(folder);
-    if (!project.formats.includes(format)) project.formats.push(format);
+  // Sheets of one workbook share a file; count its bytes once per project.
+  const files = new Map<string, { projectName: string; bytes: number }>();
+  for (const source of sources) {
+    files.set(`${source.projectName}\u0000${source.relPath}`, {
+      projectName: source.projectName,
+      bytes: source.bytes,
+    });
+  }
+  for (const file of files.values()) {
+    const project = projectMap.get(file.projectName);
+    if (project) project.bytes += file.bytes;
   }
 
   // Make schema slugs unique even when folder names collide after slugging.
@@ -291,7 +420,8 @@ function buildCatalog(dataDir: string, dataRoot: string) {
     (a, b) =>
       a.projectName.localeCompare(b.projectName) ||
       a.folder.localeCompare(b.folder) ||
-      a.fileName.localeCompare(b.fileName),
+      a.fileName.localeCompare(b.fileName) ||
+      (a.sheet ?? '').localeCompare(b.sheet ?? ''),
   );
 
   return {

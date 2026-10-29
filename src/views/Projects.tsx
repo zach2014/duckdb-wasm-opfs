@@ -19,7 +19,7 @@ import {
   catalogRows,
   folderCount,
   formatLabel,
-  shortFileName,
+  shortSourceLabel,
   sourceTitle,
 } from '../db/sources';
 import {
@@ -114,7 +114,7 @@ export function Projects({
         title="数据项目"
         description={
           <>
-            <b>{dataRoot}/</b> 是数据库根目录。每个子目录是一个项目，目录里的每个文件都是一个独立数据源。
+            <b>{dataRoot}/</b> 是数据库根目录。每个子目录是一个项目，目录里的每个文件（XLSX 按工作表）都是一个独立数据源。
             文件之间不会自动合并，选择项目后再选择数据源加载。
           </>
         }
@@ -298,7 +298,7 @@ export function Projects({
                   <div className="project-sample">
                     {projectSources.slice(0, 3).map((source) => (
                       <span key={source.id} className="mono">
-                        {shortFileName(source)}
+                        {shortSourceLabel(source)}
                       </span>
                     ))}
                   </div>
@@ -333,7 +333,7 @@ export function Projects({
                       {project.name}/
                     </button>
                     <span className="tree-meta">
-                      {formatInt(project.sourceCount)} files · {formatInt(project.rowCount)} rows
+                      {formatInt(project.sourceCount)} sources · {formatInt(project.rowCount)} rows
                     </span>
                   </div>
                   {projectSources.slice(0, 3).map((source) => (
@@ -345,7 +345,7 @@ export function Projects({
                         className="tree-link tree-link--file mono"
                         onClick={() => onOpenSource(project, source)}
                       >
-                        {shortFileName(source)}
+                        {shortSourceLabel(source)}
                       </button>
                       <span className="tree-meta">
                         {formatLabel(source.format)} · {formatInt(source.rows)} rows
@@ -357,7 +357,7 @@ export function Projects({
                       <span className="tree-indent" />
                       <span className="tree-indent" />
                       <span className="mono">
-                        + {formatInt(projectSources.length - 3)} more files
+                        + {formatInt(projectSources.length - 3)} more sources
                       </span>
                     </div>
                   )}
@@ -388,7 +388,7 @@ export function Projects({
               <div>
                 <p className="rule-title">文件即数据源</p>
                 <p className="rule-body">
-                  每个 CSV / TSV / JSON 文件拥有自己的字段、行数与指纹。
+                  每个 CSV / TSV / JSON / XLSX 工作表拥有自己的字段、行数与指纹。
                 </p>
               </div>
             </li>
@@ -464,7 +464,8 @@ export function Projects({
                   <span className="loaded-text">
                     <span className="loaded-title">{sourceTitle(source)}</span>
                     <span className="loaded-meta mono">
-                      {project?.name ?? source.projectName} ·{' '}
+                      {project?.name ?? source.projectName}
+                      {source.sheet ? ` · ${source.sheet}` : ''} ·{' '}
                       {entry ? formatInt(entry.rowCount) : 0} rows
                     </span>
                   </span>

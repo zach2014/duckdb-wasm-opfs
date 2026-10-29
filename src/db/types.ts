@@ -1,4 +1,4 @@
-export type SourceFormat = 'csv' | 'tsv' | 'json' | 'jsonl';
+export type SourceFormat = 'csv' | 'tsv' | 'json' | 'jsonl' | 'xlsx';
 
 /** Semantic shape of a source, derived from its column names. */
 export type SourceKind =
@@ -45,6 +45,8 @@ export interface SourceDef {
   baseName: string;
   folder: string;
   format: SourceFormat;
+  /** Sheet name for XLSX sources; one sheet is one independent source. */
+  sheet?: string;
   bytes: number;
   rows: number;
   columns: string[];

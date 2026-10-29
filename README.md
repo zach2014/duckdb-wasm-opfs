@@ -11,6 +11,8 @@ npm run dev
 
 The default data root is `data/`. Every immediate subfolder is a project; every CSV, TSV, JSON, JSONL, or NDJSON file beneath a project is an independent source. Files sitting directly in the data root are ignored.
 
+XLSX workbooks are supported too: each non-empty sheet becomes its own source and its own table, so sheets with different columns never collide. The browser loads the workbook only when a sheet is opened.
+
 ## Data root
 
 Set `ATLAS_DATA_ROOT` to read another folder, either relative to the project root or absolute. Point it at the folder that **contains** project folders, not at a project folder itself:

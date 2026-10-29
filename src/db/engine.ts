@@ -215,23 +215,25 @@ async function countRows(
   return Number(result.rows[0]?.n ?? 0);
 }
 
-function readerSql(source: SourceDef, virtualPath: string): string {
+type IngestFormat = 'csv' | 'tsv' | 'json' | 'jsonl';
+
+function readerSql(format: IngestFormat, virtualPath: string): string {
   const path = sqlString(virtualPath);
-  if (source.format === 'csv') {
+  if (format === 'csv') {
     return `read_csv_auto(${path}, HEADER = true, SAMPLE_SIZE = -1)`;
   }
-  if (source.format === 'tsv') {
+  if (format === 'tsv') {
     return `read_csv_auto(${path}, HEADER = true, SAMPLE_SIZE = -1, DELIM = '\\t')`;
   }
-  if (source.format === 'jsonl') {
+  if (format === 'jsonl') {
     return `read_json_auto(${path}, FORMAT = 'newline_delimited')`;
   }
   return `read_json_auto(${path})`;
 }
 
 /**
- * Load exactly one file into its project schema. Files are never unioned:
- * each source gets its own table so conflicting headers stay isolated.
+ * Load exactly one file or worksheet into its project schema. Sources are
+ * never unioned: each gets its own table so conflicting headers stay isolated.
  */
 export async function loadSource(
   warehouse: Warehouse,
@@ -256,16 +258,38 @@ export async function loadSource(
   if (!response.ok) {
     throw new Error(`无法读取 ${source.relPath} (${response.status})`);
   }
-  const text = await response.text();
+
+  let content: string;
+  if (source.format === 'xlsx') {
+    if (!source.sheet) {
+      throw new Error(`XLSX 数据源缺少工作表信息：${source.relPath}`);
+    }
+    const { sheetToCsv } = await import('./sheet');
+    try {
+      content = sheetToCsv(await response.arrayBuffer(), source.sheet);
+    } catch (error) {
+      throw new Error(
+        `无法读取 ${source.relPath} 的工作表「${source.sheet}」：${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  } else {
+    content = await response.text();
+  }
+
+  // XLSX sheets are converted to CSV before ingestion.
+  const ingestFormat: IngestFormat =
+    source.format === 'xlsx' ? 'csv' : source.format;
 
   await conn.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(projectSlug)}`);
 
-  const virtualPath = `${SEED_DIR}/${source.id}-${source.fingerprint}.${source.format}`;
-  await db.registerFileText(virtualPath, text);
+  const virtualPath = `${SEED_DIR}/${source.id}-${source.fingerprint}.${ingestFormat}`;
+  await db.registerFileText(virtualPath, content);
   try {
     await conn.query(
       `CREATE OR REPLACE TABLE ${quoteIdent(projectSlug)}.${quoteIdent(tableName)} AS
-       SELECT * FROM ${readerSql(source, virtualPath)}`,
+       SELECT * FROM ${readerSql(ingestFormat, virtualPath)}`,
     );
   } finally {
     try {

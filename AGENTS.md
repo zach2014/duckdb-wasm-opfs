@@ -4,7 +4,7 @@ Local-first DuckDB-Wasm workbench for browsing a data root (default `data/`) and
 
 ## Data model
 
-- The data root is an immediate parent of **projects**; a tabular file anywhere beneath a project is a **source**.
+- The data root is an immediate parent of **projects**; a tabular file anywhere beneath a project is a **source**. An XLSX workbook contributes one source per non-empty sheet.
 - One project maps to one DuckDB schema (its slug). One source maps to one table named `<kind>_<id>`.
 - Every source keeps its own column model. Loading is per source: one file = one table, so conflicting headers stay isolated.
 - The data root is the user's input. Treat it as read-only and keep fixtures, caches, and outputs in a separate scratch directory.
@@ -21,11 +21,13 @@ The client and catalog always use `/data/` as the public URL prefix, whatever th
 
 The client reads that catalog for browsing; raw files are fetched only when a source is opened (`src/db/sources.ts`). Keep filesystem discovery in the plugin.
 
-Formats are `csv`, `tsv`, `json`, `jsonl`/`ndjson`. To add one, update `FORMATS` (Vite plugin), `SourceFormat` (`src/db/types.ts`), `readerSql()` (`engine.ts`), and the source URL/format helpers.
+Formats are `csv`, `tsv`, `json`, `jsonl`/`ndjson`, and `xlsx`. To add one, update `FORMATS` (Vite plugin), `SourceFormat` (`src/db/types.ts`), the ingest path (`engine.ts`), and the source URL/format helpers.
+
+XLSX files produce one source per non-empty sheet: `sheet` is the sheet name, the id hashes `relPath + sheet`, and all sheets share the workbook fingerprint. `src/db/sheet.ts` converts the selected sheet to CSV for `read_csv_auto`; it is imported dynamically so SheetJS only loads when a workbook is opened.
 
 ## Lazy tables
 
-`src/db/engine.ts` opens `opfs://atlas-workbench.duckdb` with an in-memory fallback and records loaded sources in `_atlas_sources`. Opening a source fetches its raw file, registers a virtual file, runs `CREATE OR REPLACE TABLE "<schema>"."<table>" AS SELECT * FROM read_csv_auto / read_json_auto`, drops the virtual file, then describes, counts, records the fingerprint, and checkpoints the OPFS database.
+`src/db/engine.ts` opens `opfs://atlas-workbench.duckdb` with an in-memory fallback and records loaded sources in `_atlas_sources`. Opening a source fetches its raw file (an XLSX sheet is first converted to CSV), registers a virtual file, runs `CREATE OR REPLACE TABLE "<schema>"."<table>" AS SELECT * FROM read_csv_auto / read_json_auto`, drops the virtual file, then describes, counts, records the fingerprint, and checkpoints the OPFS database.
 
 A matching fingerprint reuses the table; a changed fingerprint rebuilds it. `readLoadedSources()` ignores metadata whose table is missing. When adding loaded-source metadata, update the meta table schema, the read path, the insert, and `LoadedSource` together.
 
@@ -37,6 +39,7 @@ DuckDB-Wasm hands Arrow dates/timestamps over as epoch milliseconds. `normalizeV
 | --- | --- |
 | `vite.config.ts` | data-root config, catalog scan, dev endpoints, build packaging |
 | `src/db/sources.ts` | catalog fetch, URL/identifier helpers, source kinds and labels |
+| `src/db/sheet.ts` | XLSX worksheet → CSV conversion (lazy SheetJS chunk) |
 | `src/db/engine.ts` | warehouse boot, lazy ingestion, metadata, query normalization |
 | `src/db/DatabaseContext.tsx` | boot state, `loaded`, `ensureSource`, refresh/reset |
 | `src/App.tsx` | hash routes, shell, shortcuts, rail |
@@ -53,6 +56,6 @@ UI copy is Chinese; identifiers and comments are English. Keep table naming in `
 
 `npm run build` runs the typecheck, the bundle, and catalog/data packaging; it must pass. The packaged build is a separate path: run `npm run preview` and repeat the load/reload check there. Run once with a non-default `ATLAS_DATA_ROOT` in dev and build: the catalog, raw files, and packaged `dist/data` must all follow it.
 
-In the browser, open a project, load a source, and check preview, profile, and SQL. Reload: the table should restore from OPFS with the same row count. Load two sources in one project and confirm `information_schema.tables` lists two separate tables. Load the same file in two projects and confirm two schemas, each with its own table. Check 390 px, 768 px, and 1440 px plus a clean console.
+In the browser, open a project, load a source, and check preview, profile, and SQL. Reload: the table should restore from OPFS with the same row count. Load two sources in one project and confirm `information_schema.tables` lists two separate tables. Load the same file in two projects and confirm two schemas, each with its own table. For a multi-sheet XLSX, load two sheets and confirm two tables with their own columns and row counts. Check 390 px, 768 px, and 1440 px plus a clean console.
 
 Done means the build passes, those browser checks pass in dev and preview, and no console errors remain.

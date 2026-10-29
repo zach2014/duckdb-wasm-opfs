@@ -31,6 +31,7 @@ import {
   kindMeta,
   qualifiedName,
   quoteIdent,
+  sourceFileLabel,
   sourceKind,
   sourceTitle,
   sourceUrl,
@@ -154,7 +155,8 @@ export function SourceExplorer({
           <>
             <span className="inline-code">{source.relPath}</span>{' '}
             <Badge tone={meta.tone}>{meta.label}</Badge>{' '}
-            <Badge tone="neutral">{formatLabel(source.format)}</Badge>
+            <Badge tone="neutral">{formatLabel(source.format)}</Badge>{' '}
+            {source.sheet && <Badge tone="neutral">工作表 · {source.sheet}</Badge>}
           </>
         }
         actions={
@@ -293,10 +295,10 @@ export function SourceExplorer({
 
       <footer className="view-footer">
         <span className="mono">
-          {project.slug} / {source.fileName}
+          {project.slug} / {sourceFileLabel(source)}
         </span>
         <span>
-          <FolderTree size={10} /> 一个文件 = 一张独立表 · 不做 UNION
+          <FolderTree size={10} /> 一个数据源 = 一张独立表 · 不做 UNION
         </span>
       </footer>
     </div>
@@ -315,7 +317,7 @@ function LoadingPanel({
       <div className="source-loading-head">
         <Loader2 size={18} className="spin" />
         <div>
-          <p>正在把文件加载为独立的 DuckDB 表</p>
+          <p>正在把数据源加载为独立的 DuckDB 表</p>
           <span className="mono">
             "{project.slug}"."{source.id}"
           </span>
@@ -323,7 +325,8 @@ function LoadingPanel({
       </div>
       <ol className="source-loading-steps">
         <li>
-          <span>01</span> 读取 {formatLabel(source.format)} 文件
+          <span>01</span> 读取 {formatLabel(source.format)}{' '}
+          {source.sheet ? '工作表' : '文件'}
         </li>
         <li>
           <span>02</span> 在项目 schema 中建立独立表
@@ -333,7 +336,9 @@ function LoadingPanel({
         </li>
       </ol>
       <p className="source-loading-foot mono">
-        {source.relPath} · {formatBytes(source.bytes)} · {formatInt(source.rows)} rows
+        {source.relPath}
+        {source.sheet ? ` · ${source.sheet}` : ''} · {formatBytes(source.bytes)} ·{' '}
+        {formatInt(source.rows)} rows
       </p>
     </div>
   );
@@ -806,7 +811,7 @@ function ProfilePanel({
             <span className="mono">
               COUNT / COUNT DISTINCT / MIN / MAX · 全表扫描
             </span>
-            <span className="mono">{source.fileName}</span>
+            <span className="mono">{sourceFileLabel(source)}</span>
           </div>
         </div>
       )}
@@ -951,7 +956,7 @@ function SqlPanel({
           <span className="editor-title">
             <Terminal size={13} />
             query.sql
-            <span className="editor-scope">{source.fileName}</span>
+            <span className="editor-scope">{sourceFileLabel(source)}</span>
           </span>
           <div className="editor-head-actions">
             <span className="kbd-hint">
