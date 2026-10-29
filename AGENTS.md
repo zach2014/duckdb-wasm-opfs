@@ -59,3 +59,17 @@ UI copy is Chinese; identifiers and comments are English. Keep table naming in `
 In the browser, open a project, load a source, and check preview, profile, and SQL. Reload: the table should restore from OPFS with the same row count. Load two sources in one project and confirm `information_schema.tables` lists two separate tables. Load the same file in two projects and confirm two schemas, each with its own table. For a multi-sheet XLSX, load two sheets and confirm two tables with their own columns and row counts. Check 390 px, 768 px, and 1440 px plus a clean console.
 
 Done means the build passes, those browser checks pass in dev and preview, and no console errors remain.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles map 1:1 to `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: read `GLOSSARY.md` and `docs/adr/` at the repo root when they exist. See `docs/agents/domain.md`.
