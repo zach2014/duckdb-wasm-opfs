@@ -17,6 +17,18 @@ import * as XLSX from 'xlsx';
 
 const DEFAULT_DATA_ROOT = 'data';
 const DATA_URL_PREFIX = '/data/';
+const DEFAULT_DOCS_ROOT = 'docs';
+const DOCS_URL_PREFIX = '/docs/';
+const DOC_EXTENSIONS = new Set(['.md', '.markdown']);
+const DOC_MIME_TYPES: Record<string, string> = {
+  '.md': 'text/markdown; charset=utf-8',
+  '.markdown': 'text/markdown; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
 
 const FORMATS: Record<string, string> = {
   '.csv': 'csv',
@@ -63,6 +75,24 @@ interface CatalogProject {
   bytes: number;
   folders: string[];
   formats: string[];
+}
+
+interface CatalogDoc {
+  path: string;
+  folder: string;
+  name: string;
+  title: string;
+  bytes: number;
+  modifiedAt: string;
+}
+
+interface DocsCatalog {
+  generatedAt: string;
+  root: string;
+  docsRoot: string;
+  docCount: number;
+  ignored: number;
+  docs: CatalogDoc[];
 }
 
 function stripBom(text: string) {
@@ -437,12 +467,93 @@ function buildCatalog(dataDir: string, dataRoot: string) {
 }
 
 /** Show the configured root relative to the project when possible. */
-function dataRootLabel(root: string, dataDir: string): string {
+function rootLabel(root: string, dataDir: string): string {
   const rel = path.relative(root, dataDir);
   if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
     return rel.split(path.sep).join('/');
   }
   return dataDir.split(path.sep).join('/');
+}
+
+/** First level-one heading, ignoring frontmatter and fenced code blocks. */
+function docTitle(text: string, fallback: string): string {
+  const lines = stripBom(text).split(/\r?\n/);
+  let frontmatter = lines[0]?.trim() === '---';
+  let fenced = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (frontmatter) {
+      if (trimmed === '---') frontmatter = false;
+      continue;
+    }
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    const match = line.match(/^#\s+(.+?)\s*#*\s*$/);
+    if (match) {
+      const title = match[1].replace(/[`*_]/g, '').trim();
+      if (title) return title;
+    }
+  }
+  return fallback;
+}
+
+function buildDocsCatalog(docsDir: string, docsRoot: string): DocsCatalog {
+  const docs: CatalogDoc[] = [];
+  let ignored = 0;
+
+  if (fs.existsSync(docsDir) && fs.statSync(docsDir).isDirectory()) {
+    for (const relPath of listFiles(docsDir)) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (!DOC_EXTENSIONS.has(ext)) {
+        ignored++;
+        continue;
+      }
+
+      const abs = path.join(docsDir, ...relPath.split('/'));
+      let text = '';
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(abs);
+        if (stat.size === 0) {
+          ignored++;
+          continue;
+        }
+        text = fs.readFileSync(abs, 'utf8');
+      } catch {
+        ignored++;
+        continue;
+      }
+
+      const segments = relPath.split('/');
+      const name = segments[segments.length - 1];
+      docs.push({
+        path: relPath,
+        folder: segments.slice(0, -1).join('/'),
+        name,
+        title: docTitle(text, name),
+        bytes: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      });
+    }
+  }
+
+  docs.sort(
+    (a, b) =>
+      a.folder.localeCompare(b.folder) ||
+      a.name.localeCompare(b.name),
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    root: DEFAULT_DOCS_ROOT,
+    docsRoot,
+    docCount: docs.length,
+    ignored,
+    docs,
+  };
 }
 
 function sendText(res: ServerResponse, status: number, body: string) {
@@ -453,16 +564,36 @@ function sendText(res: ServerResponse, status: number, body: string) {
   res.end(body);
 }
 
+function sendJson(res: ServerResponse, status: number, body: unknown) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify(body));
+}
+
+interface ServeFileOptions {
+  req: IncomingMessage;
+  res: ServerResponse;
+  rootDir: string;
+  pathname: string;
+  prefix: string;
+  minSegments: number;
+  mimeFor: (ext: string) => string | undefined;
+}
+
 /**
- * Dev-only static serving for the configured root. Only catalog formats are
+ * Dev-only static serving for a configured root. Only accepted extensions are
  * exposed, and every decoded path must stay inside the root.
  */
-function serveDataFile(
-  req: IncomingMessage,
-  res: ServerResponse,
-  dataDir: string,
-  pathname: string,
-) {
+function serveWorkspaceFile({
+  req,
+  res,
+  rootDir,
+  pathname,
+  prefix,
+  minSegments,
+  mimeFor,
+}: ServeFileOptions) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.setHeader('Allow', 'GET, HEAD');
     sendText(res, 405, 'Method Not Allowed');
@@ -471,7 +602,7 @@ function serveDataFile(
 
   let relative: string;
   try {
-    relative = decodeURIComponent(pathname.slice(DATA_URL_PREFIX.length));
+    relative = decodeURIComponent(pathname.slice(prefix.length));
   } catch {
     sendText(res, 400, 'Malformed path');
     return;
@@ -479,7 +610,7 @@ function serveDataFile(
 
   const segments = relative.split('/');
   if (
-    segments.length < 2 ||
+    segments.length < minSegments ||
     segments.some(
       (segment) =>
         !segment ||
@@ -494,15 +625,16 @@ function serveDataFile(
     return;
   }
 
-  const filePath = path.resolve(dataDir, ...segments);
-  const rel = path.relative(dataDir, filePath);
+  const filePath = path.resolve(rootDir, ...segments);
+  const rel = path.relative(rootDir, filePath);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
     sendText(res, 403, 'Forbidden');
     return;
   }
 
   const ext = path.extname(filePath).toLowerCase();
-  if (!FORMATS[ext]) {
+  const mime = mimeFor(ext);
+  if (!mime) {
     sendText(res, 404, 'Not found');
     return;
   }
@@ -520,7 +652,7 @@ function serveDataFile(
   }
 
   res.statusCode = 200;
-  res.setHeader('Content-Type', MIME_TYPES[ext] ?? 'application/octet-stream');
+  res.setHeader('Content-Type', mime);
   res.setHeader('Content-Length', stat.size);
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -537,6 +669,40 @@ function serveDataFile(
   stream.pipe(res);
 }
 
+function serveDataFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  dataDir: string,
+  pathname: string,
+) {
+  serveWorkspaceFile({
+    req,
+    res,
+    rootDir: dataDir,
+    pathname,
+    prefix: DATA_URL_PREFIX,
+    minSegments: 2,
+    mimeFor: (ext) => MIME_TYPES[ext],
+  });
+}
+
+function serveDocsFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  docsDir: string,
+  pathname: string,
+) {
+  serveWorkspaceFile({
+    req,
+    res,
+    rootDir: docsDir,
+    pathname,
+    prefix: DOCS_URL_PREFIX,
+    minSegments: 1,
+    mimeFor: (ext) => DOC_MIME_TYPES[ext],
+  });
+}
+
 function atlasCatalog(configuredDataRoot: string): Plugin {
   let root = process.cwd();
   let outDir = path.join(root, 'dist');
@@ -549,7 +715,7 @@ function atlasCatalog(configuredDataRoot: string): Plugin {
       root = config.root;
       outDir = path.resolve(config.root, config.build.outDir);
       dataDir = path.resolve(root, configuredDataRoot);
-      dataRoot = dataRootLabel(root, dataDir);
+      dataRoot = rootLabel(root, dataDir);
       if (!fs.existsSync(dataDir)) {
         console.warn(`[atlas] ATLAS_DATA_ROOT not found: ${dataDir}`);
       }
@@ -567,17 +733,11 @@ function atlasCatalog(configuredDataRoot: string): Plugin {
         }
         try {
           const catalog = buildCatalog(dataDir, dataRoot);
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.setHeader('Cache-Control', 'no-store');
-          res.end(JSON.stringify(catalog));
+          sendJson(res, 200, catalog);
         } catch (error) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(
-            JSON.stringify({
-              error: error instanceof Error ? error.message : String(error),
-            }),
-          );
+          sendJson(res, 500, {
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       });
     },
@@ -614,13 +774,110 @@ function atlasCatalog(configuredDataRoot: string): Plugin {
   };
 }
 
+function atlasDocs(configuredDocsRoot: string): Plugin {
+  let root = process.cwd();
+  let outDir = path.join(root, 'dist');
+  let docsDir = path.resolve(root, configuredDocsRoot);
+  let docsRoot = configuredDocsRoot.split(path.sep).join('/');
+
+  return {
+    name: 'atlas-docs',
+    configResolved(config) {
+      root = config.root;
+      outDir = path.resolve(config.root, config.build.outDir);
+      docsDir = path.resolve(root, configuredDocsRoot);
+      docsRoot = rootLabel(root, docsDir);
+      if (!fs.existsSync(docsDir) || !fs.statSync(docsDir).isDirectory()) {
+        console.warn(`[atlas] ATLAS_DOCS_ROOT not found: ${docsDir}`);
+      }
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? '').split('?')[0];
+        if (url.startsWith(DOCS_URL_PREFIX)) {
+          serveDocsFile(req, res, docsDir, url);
+          return;
+        }
+        if (url !== '/docs-catalog.json') {
+          next();
+          return;
+        }
+        try {
+          const catalog = buildDocsCatalog(docsDir, docsRoot);
+          sendJson(res, 200, catalog);
+        } catch (error) {
+          sendJson(res, 500, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+    },
+    closeBundle() {
+      try {
+        const exists =
+          fs.existsSync(docsDir) && fs.statSync(docsDir).isDirectory();
+        if (exists) {
+          const fromOut = path.relative(outDir, docsDir);
+          if (
+            !fromOut ||
+            (!fromOut.startsWith('..') && !path.isAbsolute(fromOut))
+          ) {
+            throw new Error(
+              `ATLAS_DOCS_ROOT must be outside the build output: ${docsDir}`,
+            );
+          }
+        }
+
+        const catalog = buildDocsCatalog(docsDir, docsRoot);
+        fs.mkdirSync(outDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(outDir, 'docs-catalog.json'),
+          JSON.stringify(catalog),
+        );
+
+        const target = path.join(outDir, DEFAULT_DOCS_ROOT);
+        fs.rmSync(target, { recursive: true, force: true });
+        if (exists) {
+          fs.cpSync(docsDir, target, {
+            recursive: true,
+            filter(source) {
+              const rel = path.relative(docsDir, source);
+              if (!rel) return true;
+              const segments = rel.split(path.sep);
+              if (segments.some((segment) => segment.startsWith('.'))) {
+                return false;
+              }
+              if (fs.statSync(source).isDirectory()) return true;
+              return Boolean(
+                DOC_MIME_TYPES[path.extname(source).toLowerCase()],
+              );
+            },
+          });
+        }
+      } catch (error) {
+        this.error(
+          `Failed to package docs catalog: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const configuredDataRoot =
     env.ATLAS_DATA_ROOT?.trim() || DEFAULT_DATA_ROOT;
+  const configuredDocsRoot =
+    env.ATLAS_DOCS_ROOT?.trim() || DEFAULT_DOCS_ROOT;
 
   return {
-    plugins: [react(), atlasCatalog(configuredDataRoot)],
+    plugins: [
+      react(),
+      atlasCatalog(configuredDataRoot),
+      atlasDocs(configuredDocsRoot),
+    ],
     server: {
       port: 5173,
     },

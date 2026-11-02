@@ -29,11 +29,16 @@ export async function fetchCatalog(): Promise<AtlasCatalog> {
   };
 }
 
-export function sourceUrl(source: SourceDef): string {
-  const encoded = source.relPath
+/** Encode each path segment while preserving the separators. */
+export function encodePath(pathValue: string): string {
+  return pathValue
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
+}
+
+export function sourceUrl(source: SourceDef): string {
+  const encoded = encodePath(source.relPath);
   // The public prefix is stable; the dev server maps it to ATLAS_DATA_ROOT.
   return `${BASE}data/${encoded}`;
 }

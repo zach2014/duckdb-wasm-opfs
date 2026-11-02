@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
+import {
+  BookOpen,
   Database,
   FolderTree,
   LayoutGrid,
@@ -8,12 +16,15 @@ import {
 } from 'lucide-react';
 import { DatabaseProvider, useDatabase } from './db/DatabaseContext';
 import { BootScreen } from './components/BootScreen';
-import { Logo } from './components/ui';
+import { Logo, Spinner } from './components/ui';
 import { Projects } from './views/Projects';
 import { ProjectDetail } from './views/ProjectDetail';
 import { SourceExplorer } from './views/SourceExplorer';
+import { docHash } from './docs';
 import { sourceTitle } from './db/sources';
 import { classNames, formatBytes, formatInt } from './lib/format';
+
+const Docs = lazy(() => import('./views/Docs'));
 
 type Route =
   | { view: 'projects' }
@@ -24,15 +35,43 @@ type Route =
       sourceId: string;
       tab?: 'preview' | 'profile' | 'sql';
     }
+  | { view: 'docs'; docPath?: string; anchor?: string }
   | { view: 'missing'; path: string };
+
+function decodeRoutePart(part: string): string | null {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return null;
+  }
+}
 
 function parseRoute(hash: string): Route {
   const raw = hash.replace(/^#\/?/, '');
-  const parts = raw
-    .split('/')
-    .filter(Boolean)
-    .map((part) => decodeURIComponent(part));
+  const queryIndex = raw.indexOf('?');
+  const rawPath = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+  const search = queryIndex === -1 ? '' : raw.slice(queryIndex + 1);
+  const parts: string[] = [];
+  for (const rawPart of rawPath.split('/').filter(Boolean)) {
+    const part = decodeRoutePart(rawPart);
+    if (
+      part === null ||
+      part.includes('/') ||
+      part.includes('\\') ||
+      part.includes('\0')
+    ) {
+      return { view: 'missing', path: rawPath };
+    }
+    parts.push(part);
+  }
   if (parts.length === 0 || parts[0] === 'projects') return { view: 'projects' };
+  if (parts[0] === 'docs') {
+    return {
+      view: 'docs',
+      docPath: parts.slice(1).join('/') || undefined,
+      anchor: new URLSearchParams(search).get('anchor') || undefined,
+    };
+  }
   if (parts[0] === 'p' && parts[1]) {
     if (parts[2] === 's' && parts[3]) {
       const tab =
@@ -134,6 +173,8 @@ function Shell() {
         tab ? `/${tab}` : ''
       }`,
     );
+  const openDoc = (path?: string, anchor?: string) =>
+    navigate(docHash(path || undefined, anchor));
 
   let content: ReactNode;
   if (route.view === 'projects') {
@@ -160,6 +201,23 @@ function Shell() {
         onBack={() => openProject(project.id)}
       />
     );
+  } else if (route.view === 'docs') {
+    content = (
+      <Suspense
+        fallback={
+          <div className="docs-loading docs-loading--route">
+            <Spinner size={16} />
+            正在加载文档视图…
+          </div>
+        }
+      >
+        <Docs
+          docPath={route.docPath}
+          anchor={route.anchor}
+          onOpenDoc={openDoc}
+        />
+      </Suspense>
+    );
   } else {
     content = (
       <div className="view">
@@ -167,7 +225,7 @@ function Shell() {
           <p className="eyebrow">404 / NOT FOUND</p>
           <h1 className="page-title">这个地址没有对应的数据</h1>
           <p className="page-desc">
-            项目或数据源可能已从数据根目录中移除。刷新目录后再试一次。
+            项目、数据源或文档可能已被移除。刷新目录后再试一次。
           </p>
           <button className="btn btn--primary" onClick={() => navigate('#/projects')}>
             返回项目总览
@@ -182,7 +240,9 @@ function Shell() {
       ? `source:${route.sourceId}:${route.tab ?? 'preview'}`
       : route.view === 'project'
         ? `project:${route.projectId}`
-        : route.view;
+        : route.view === 'docs'
+          ? `docs:${route.docPath ?? ''}:${route.anchor ?? ''}`
+          : route.view;
 
   return (
     <div className="app">
@@ -210,6 +270,18 @@ function Shell() {
             <LayoutGrid size={16} strokeWidth={1.7} />
             <span className="rail-item-label">项目总览</span>
             <span className="rail-key">⌘1</span>
+          </button>
+
+          <button
+            className={classNames(
+              'rail-item',
+              route.view === 'docs' && 'rail-item--active',
+            )}
+            onClick={() => navigate('#/docs')}
+          >
+            <span className="rail-item-index">MD</span>
+            <BookOpen size={16} strokeWidth={1.7} />
+            <span className="rail-item-label">文档</span>
           </button>
 
           <p className="rail-label rail-label--sub">PROJECTS</p>
@@ -285,7 +357,19 @@ function Shell() {
               ATLAS
             </button>
             <span className="crumb-sep">/</span>
-            {project ? (
+            {route.view === 'docs' ? (
+              <>
+                <button className="crumb-link" onClick={() => navigate('#/docs')}>
+                  文档
+                </button>
+                {route.docPath && (
+                  <>
+                    <span className="crumb-sep">/</span>
+                    <span className="crumb-current">{route.docPath}</span>
+                  </>
+                )}
+              </>
+            ) : project ? (
               <>
                 <button
                   className="crumb-link"
@@ -306,9 +390,11 @@ function Shell() {
           </div>
           <div className="topbar-right">
             <span className="topbar-hint">
-              {projects.length > 0
-                ? `⌘1 总览 · ⌘2–${Math.min(projects.length + 1, 9)} 项目`
-                : 'LOCAL-FIRST'}
+              {route.view === 'docs'
+                ? 'DOCS · READ ONLY'
+                : projects.length > 0
+                  ? `⌘1 总览 · ⌘2–${Math.min(projects.length + 1, 9)} 项目`
+                  : 'LOCAL-FIRST'}
             </span>
             <span
               className={classNames(
@@ -357,6 +443,13 @@ function Shell() {
         >
           <SquareTerminal size={18} />
           <span>SQL</span>
+        </button>
+        <button
+          className={route.view === 'docs' ? 'active' : ''}
+          onClick={() => navigate('#/docs')}
+        >
+          <BookOpen size={18} />
+          <span>文档</span>
         </button>
       </nav>
     </div>

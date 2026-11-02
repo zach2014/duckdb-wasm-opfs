@@ -39,6 +39,18 @@ Shell values win over files. Start from [`.env.example`](.env.example).
 
 The browser always requests sources under `/data/…`; the dev server maps that prefix to the configured root, and a build writes the catalog plus a `data/` copy into `dist/`.
 
+## Docs viewer
+
+Markdown under `docs/` is browsable in the app at `#/docs` (or the **文档** rail item). The viewer renders GitHub-flavored Markdown, including tables, task lists, code fences, relative links between documents, and images stored beside the docs.
+
+Set `ATLAS_DOCS_ROOT` to index a different folder; relative paths resolve from the project root and unset means `docs`:
+
+```bash
+ATLAS_DOCS_ROOT=handbook npm run dev
+```
+
+The viewer is read-only. A build writes `dist/docs-catalog.json` and copies the docs root into `dist/docs`, so `npm run preview` behaves like dev. A missing docs root shows an empty state and does not fail the build.
+
 ## Build
 
 ```bash
@@ -46,4 +58,4 @@ npm run build
 npm run preview
 ```
 
-The build fails if the configured data root does not exist.
+The build fails if the configured data root does not exist; the docs root is optional.
